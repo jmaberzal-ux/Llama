@@ -42,12 +42,15 @@ async function dec(s){
 }
 
 /* ---------- capa de datos (Supabase) ---------- */
-async function putDoc(k,obj){try{const e=await enc(obj);const r=await sb.from('docs').upsert({k,e});if(r.error)console.log('putDoc',k,r.error.message);}catch(e){}}
+async function putDoc(k,obj){try{const e=await enc(obj);const r=await sb.from('docs').upsert({k,e});if(r.error){console.log('putDoc',k,r.error.message);return false;}return true;}catch(e){return false;}}
 async function putRow(table,row){try{const r=await sb.from(table).upsert(row);if(r.error)console.log('putRow',table,r.error.message);}catch(e){}}
 async function delRow(table,id){try{await sb.from(table).delete().eq('id',id);}catch(e){}}
 async function rpcPts(slot,delta){try{await sb.rpc('add_points',{p_slot:slot,p_delta:delta});}catch(e){}}
 async function saveProp(p){await putRow('props',{id:p.id,from_slot:p.from,to_slot:p.to,st:p.st,e:await enc(p)});}
-async function saveChat(x){await putRow('chat',{id:x.id,from_slot:x.from,to_slot:x.to,kind:x.kind,at:new Date(x.at).toISOString(),seen:!!x.seen,e:await enc({t:x.t,img:x.img})});}
+async function saveChat(x){const e=await enc({t:x.t,img:x.img});
+ // lo que me mandan solo lo puedo actualizar (marcar visto), no reinsertar
+ if(x.from!==ME.slot){try{const r=await sb.from('chat').update({seen:!!x.seen,e}).eq('id',x.id);if(r.error)console.log('chat upd',r.error.message);}catch(err){}return;}
+ await putRow('chat',{id:x.id,from_slot:x.from,to_slot:x.to,kind:x.kind,at:new Date(x.at).toISOString(),seen:!!x.seen,e});}
 async function saveVale(v){await putRow('vales',{id:v.id,slot:v.u,v:v.v,used:!!v.used});}
 
 /* ---------- reconstruir el estado S desde la base de datos ---------- */
@@ -80,13 +83,17 @@ async function loadAll(){
  // feed (solo el mío)
  for(const x of await decRows('feed')){NS.feed.push({u:ME.slot,t:x.o.t,ts:x.o.ts||0});}
  NS.feed.sort((a,b)=>b.ts-a.ts);if(NS.feed.length>80)NS.feed.length=80;
+ // lo mío que aún no se ha guardado manda sobre lo que llega del servidor
+ if(_dirty&&BOOTED&&S&&S.me===ME.slot){applyDoc(NS,ME.slot,myDoc());NS.items=S.items;NS.custom=S.custom;NS.word=S.word;}
+ if(BOOTED&&S&&S.chat){const ids=new Set(NS.chat.map(x=>x.id));S.chat.forEach(x=>{if(x._loc&&!ids.has(x.id)&&Date.now()-x._loc<20000)NS.chat.push(x);});NS.chat.sort((a,b)=>a.at-b.at);}
  S=NS;
 }
 
 /* ---------- guardar (sincroniza mi cuestionario + el cajón) ---------- */
-let _sv=null;
-function save(){clearTimeout(_sv);_sv=setTimeout(flush,350);}
-async function flush(){if(!BOOTED||!ME.slot)return;await putDoc(ME.slot+'.quiz',myDoc());await putDoc('shared.cajon',{items:S.items,custom:S.custom,word:S.word,temp:S.temp,tempAt:S.tempAt,logros:S.logros});}
+let _sv=null,_dirty=false;const _last={};
+function save(){_dirty=true;clearTimeout(_sv);_sv=setTimeout(flush,350);}
+async function putDocIf(k,obj){const j=JSON.stringify(obj);if(_last[k]===j)return;if(await putDoc(k,obj))_last[k]=j;}
+async function flush(){if(!BOOTED||!ME.slot)return;_sv=null;await putDocIf(ME.slot+'.quiz',myDoc());await putDocIf('shared.cajon',{items:S.items,custom:S.custom,word:S.word,temp:S.temp,tempAt:S.tempAt,logros:S.logros});if(!_sv)_dirty=false;}
 
 /* ---------- puntos vía función segura ---------- */
 function addPts(slot,delta){S.pts[slot]=Math.max(0,(S.pts[slot]||0)+delta);rpcPts(slot,delta);}
@@ -352,13 +359,13 @@ const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;'
 const ot=u=>u==='a'?'b':'a';
 const nm=u=>S.names[u]||'';
 const now=()=>Date.now();
-const uid=()=>Math.random().toString(36).slice(2,9);
+const uid=()=>(globalThis.crypto&&crypto.randomUUID)?crypto.randomUUID():'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0;return(c==='x'?r:(r&3|8)).toString(16);});
 const rnd=a=>a[Math.floor(Math.random()*a.length)];
 const shuf=a=>{a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;};
 const hhmm=t=>new Date(t).toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'});
 function toast(t){const el=$('#toast');el.textContent=t;el.classList.add('on');clearTimeout(toast._t);toast._t=setTimeout(()=>el.classList.remove('on'),2800);}
 function feed(u,t){if(u===ME.slot){S.feed.unshift({u,t,ts:now()});if(S.feed.length>80)S.feed.length=80;}pushFeed(u,t);}
-async function pushFeed(u,t){try{await putRow('feed',{id:uid(),to_slot:u,e:await enc({t,ts:Date.now()})});}catch(e){}}
+async function pushFeed(u,t){try{const r=await sb.from('feed').insert({id:uid(),to_slot:u,e:await enc({t,ts:Date.now()})});if(r.error)console.log('feed',r.error.message);}catch(e){}}
 function hsh(s){let h=5381;for(let i=0;i<s.length;i++)h=((h<<5)+h+s.charCodeAt(i))|0;return 'h'+(h>>>0).toString(36);}
 
 const fmt=s=>{s=Math.max(0,Math.ceil(s));return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');};
@@ -396,7 +403,7 @@ function insinuaHint(o){if(!S.qdone[o])return false;const st=S.sty[o]||{};return
 
 /* =================== ACCIONES BÁSICAS =================== */
 function send(o){const s=S.me,t=ot(s);const p=Object.assign({id:uid(),from:s,to:t,st:'pend',ts:now(),used:[],tips:[]},o);S.props.unshift(p);addPts(s,5);feed(t,`✉️ ${nm(s)} te ha mandado algo ${LV[p.l].e}`);saveProp(p);notify();toast(`Enviado a ${nm(t)} · +5 por atreverte`);return p;}
-function pushChat(o){const s=S.me,t=ot(s);const x=Object.assign({id:uid(),from:s,to:t,at:now()},o);S.chat.push(x);if(S.chat.length>400)S.chat.splice(0,S.chat.length-400);saveChat(x);if(x.at<=now())notify();}
+function pushChat(o){const s=S.me,t=ot(s);const x=Object.assign({id:uid(),from:s,to:t,at:now()},o);x._loc=Date.now();S.chat.push(x);if(S.chat.length>400)S.chat.splice(0,S.chat.length-400);saveChat(x);if(x.at<=now())notify();}
 function visibleChat(me){const n=now();return S.chat.filter(x=>(x.from===me||x.to===me)&&(x.from===me||x.at<=n)).sort((a,b)=>a.at-b.at);}
 function unread(me){const n=now();return S.chat.filter(x=>x.to===me&&x.at<=n&&x.at>S.read[me]).length;}
 function castigoPara(u){const ok=CAST.filter(k=>S.kok[u][k[0]]);return ok.length?rnd(ok):['k0',1,'Le debes un favor a elegir, dentro de vuestra lista.'];}
@@ -494,7 +501,7 @@ function vProp(){const s=S.me,t=ot(s);let h=`<h1>Proponer</h1><p class="sub">Eli
   h+=`<h2>Ideas para ${esc(nm(t))}</h2>`+(ui.sug.length?ui.sug.map((x,i)=>`<div class="card"><div class="top"><span>${catOf(x.c.c).e} ${LV[x.c.l].e} ${LV[x.c.l].n}</span><span>${x.d?'⏱️ '+durLabel(x.d)+' · ':''}+${10*x.c.l}</span></div><div class="txt">${esc(x.txt)}</div>${thumbsOf(x.used)}${tipsHTML(x.tips)}<div class="row"><button class="btn p" data-a="sendSug" data-v="${i}">Mandar</button><button class="btn mini" data-a="editSug" data-v="${i}">✏️ Cambiar texto</button></div></div>`).join('')+`<div class="row"><button class="btn" data-a="reshuf">↻ Otras ideas</button></div>`:`<div class="empty">Nada en este nivel con lo que habéis marcado. Prueba otro nivel o escribe la tuya.</div>`);}
  return h;}
 
-function vChat(){const me=S.me,o=ot(me);const xs=visibleChat(me);S.read[me]=now();save();
+function vChat(){const me=S.me,o=ot(me);const xs=visibleChat(me);const lastIn=xs.reduce((m,x)=>x.to===me?Math.max(m,x.at):m,0);if(lastIn>(S.read[me]||0)){S.read[me]=lastIn;save();}
  let h=`<h1>Chat</h1><p class="sub">Solo vosotros dos. Las fotos son de ver una vez: se borran al cerrarlas.</p><div class="chat">`;
  if(!xs.length)h+=`<div class="empty">Aún nada. Escríbele algo… o mándale una pista 🤫</div>`;
  xs.forEach(x=>{const mine=x.from===me;const tm=hhmm(x.at);let body='';
@@ -541,7 +548,7 @@ function vDeck(){const D=ui.deck,x=D.card;return `<div class="deck"><div class="
 
 /* =================== RENDER =================== */
 const VIEWS={home:vHome,prop:vProp,chat:vChat,nos:vNos,cajon:vCajon};
-function render(keep){const y=keep?window.scrollY:0;const app=$('#app');let cls='bare';
+function render(keep){const y=keep?window.scrollY:0;const app=$('#app');let cls='bare';const m0=keep?$('#msg'):null,mv=m0?m0.value:'',mf=!!m0&&document.activeElement===m0;
  if(screen==='boot')app.innerHTML=vBoot();
  else if(screen==='fatal')app.innerHTML=vFatal();
  else if(screen==='pass')app.innerHTML=vPass();
@@ -550,7 +557,7 @@ function render(keep){const y=keep?window.scrollY:0;const app=$('#app');let cls=
  else if(ui.deck)app.innerHTML=vDeck();
  else if(ui.quiz!=null)app.innerHTML=vQuiz();
  else{app.innerHTML=header()+'<main>'+VIEWS[ui.tab]()+'</main>'+nav();cls='';}
- document.body.className=cls;if(keep)window.scrollTo(0,y);}
+ document.body.className=cls;if(mv){const m1=$('#msg');if(m1){m1.value=mv;if(mf)m1.focus();}}if(keep)window.scrollTo(0,y);}
 function openSheet(k,d){ui.sheet={k,d};renderSheet();}
 function renderSheet(){const el=$('#sheet');if(!ui.sheet){el.className='sheet hidden';el.innerHTML='';return;}
  if(ui.sheet.k==='view'||ui.sheet.k==='timer')el.innerHTML=SH[ui.sheet.k]();else el.innerHTML=`<div class="scrim" data-a="closeSheet"></div><div class="panel"><div class="grab"></div><button class="x" data-a="closeSheet" aria-label="Cerrar">✕</button>${SH[ui.sheet.k](ui.sheet.d)}</div>`;
@@ -699,7 +706,7 @@ A.fSave=()=>{const f=ui.form;const n=(f.n||'').trim()||tipoOf(f.k,f.t)[2];S.item
 A.itemOpen=id=>openSheet('itemV',id);
 A.itemDel=id=>{S.items=S.items.filter(x=>x.id!==id);ui.sug=[];save();toast('Quitado del cajón');closeSheet();};
 
-A.sendMsg=()=>{const el=$('#msg');const t=(el&&el.value||'').trim();if(!t)return;pushChat({kind:'txt',t});save();render(true);setTimeout(()=>{window.scrollTo(0,document.body.scrollHeight);const e=$('#msg');if(e)e.focus();},0);};
+A.sendMsg=()=>{const el=$('#msg');const t=(el&&el.value||'').trim();if(!t)return;el.value='';pushChat({kind:'txt',t});render(true);setTimeout(()=>{window.scrollTo(0,document.body.scrollHeight);const e=$('#msg');if(e)e.focus();},0);};
 A.viewImg=id=>{const x=S.chat.find(y=>y.id===id);if(!x||x.seen||!x.img){toast('Esta foto ya no está');return;}ui.viewImg=x.img;x.img=null;x.seen=true;saveChat(x);openSheet('view');};
 A.viewClose=()=>{ui.viewImg=null;closeSheet();};
 
@@ -732,10 +739,12 @@ document.addEventListener('click',e=>{const b=e.target.closest('[data-a]');if(!b
 document.addEventListener('input',e=>{const el=e.target;if(el&&el.dataset&&el.dataset.in&&IN[el.dataset.in])IN[el.dataset.in](el.value,el);});
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target&&e.target.id==='msg'){e.preventDefault();A.sendMsg();}});
 function shrink(file,M,q,cb){const rd=new FileReader();rd.onload=()=>{const img=new Image();img.onload=()=>{let w=img.naturalWidth,h=img.naturalHeight;const sc=Math.min(1,M/Math.max(w,h));w=Math.round(w*sc);h=Math.round(h*sc);const cv=document.createElement('canvas');cv.width=w;cv.height=h;cv.getContext('2d').drawImage(img,0,0,w,h);cb(cv.toDataURL('image/jpeg',q));};img.onerror=()=>toast('No he podido leer la foto');img.src=rd.result;};rd.readAsDataURL(file);}
-document.addEventListener('change',e=>{const el=e.target;if(!el||!el.dataset||!el.dataset.file)return;const f=el.files&&el.files[0];if(!f)return;const kind=el.dataset.file;
+document.addEventListener('change',e=>{const el=e.target;if(!el||!el.dataset||!el.dataset.file)return;_pick=0;const f=el.files&&el.files[0];if(!f)return;const kind=el.dataset.file;
  if(kind==='import'){const rd=new FileReader();rd.onload=()=>applyImport(String(rd.result||''));rd.onerror=()=>toast('No he podido leer el archivo');rd.readAsText(f);el.value='';return;}
  shrink(f,kind==='chat'?1280:480,kind==='chat'?.8:.72,url=>{if(kind==='chat'){pushChat({kind:'img',img:url});save();toast('📸 Enviada · de ver una vez');render(true);window.scrollTo(0,document.body.scrollHeight);}else if(ui.form){ui.form.ph=url;renderSheet();}});el.value='';});
-setInterval(()=>{const a=document.activeElement;if(screen!=='app'||ui.sheet||ui.deck||ui.quiz!=null)return;if(a&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA'))return;if(ui.tab==='home'||ui.tab==='chat')render(true);},20000);
+let _pick=0;document.addEventListener('click',e=>{const l=e.target&&e.target.closest&&e.target.closest('label');if(l&&l.querySelector&&l.querySelector('input[type=file]'))_pick=Date.now();},true);
+const picking=()=>Date.now()-_pick<120000;
+setInterval(()=>{const a=document.activeElement;if(screen!=='app'||ui.sheet||ui.deck||ui.quiz!=null||picking())return;if(a&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA'))return;if(ui.tab==='home'||ui.tab==='chat')render(true);},20000);
 
 /* =================================================================
    Llama · extras
@@ -763,18 +772,25 @@ EXTRA_RAW.forEach((x,i)=>CARDS.push({id:'cx'+i,c:x[0],l:x[1],t:x[2],r:x[3]?x[3].
 /* ---------------- pantallas previas ---------------- */
 function vBoot(){return `<div class="lock"><div style="font-size:48px">🔥</div><div class="sub">Abriendo…</div></div>`;}
 function vFatal(){return `<div class="lock"><div style="font-size:44px">🔥</div><p class="sub" style="max-width:300px;text-align:center">${esc(fatalMsg)}</p><div class="row" style="max-width:280px"><button class="btn" data-a="logout">Salir</button></div></div>`;}
-function vPass(){return `<div class="lock"><div style="font-size:46px">🔒</div><h1 style="text-align:center;margin:0">Clave de pareja</h1><p class="sub" style="max-width:330px;text-align:center">La misma en los dos móviles. Es la que cifra todo lo vuestro. No se guarda en ningún servidor: si la perdéis, no hay forma de recuperar lo de dentro.</p><div style="width:100%;max-width:330px"><input id="passIn" type="password" placeholder="Clave de pareja" autocomplete="off" autocapitalize="off"><div class="row"><button class="btn p" data-a="passGo">Entrar</button></div></div></div>`;}
+function vPass(){return `<div class="lock"><div style="font-size:46px">🔒</div><h1 style="text-align:center;margin:0">Clave de pareja</h1>${passMsg?`<p class="hint" style="max-width:330px;text-align:center">${esc(passMsg)}</p>`:''}<p class="sub" style="max-width:330px;text-align:center">La misma en los dos móviles. Es la que cifra todo lo vuestro. No se guarda en ningún servidor: si la perdéis, no hay forma de recuperar lo de dentro.</p><div style="width:100%;max-width:330px"><input id="passIn" type="password" placeholder="Clave de pareja" autocomplete="off" autocapitalize="off"><div class="row"><button class="btn p" data-a="passGo">Entrar</button></div></div></div>`;}
 
 A.passGo=async()=>{const el=$('#passIn');const v=(el&&el.value||'').trim();if(v.length<6){toast('Al menos 6 caracteres');return;}toast('Comprobando…');await submitPass(v);};
 A.logout=()=>{if(confirm('¿Salir de la cuenta en este móvil?'))SHELL.logout();};
 
 /* ---------------- arranque ---------------- */
+let OLDCK=null,passMsg='';
+async function decWith(k,s){const c=CK;CK=k;try{return await dec(s);}finally{CK=c;}}
+// ¿la clave guardada en este móvil abre el candado común? true / false / null (no se pudo comprobar)
+async function keyOK(){try{const chk=await sb.from('docs').select('e').eq('k','shared.check').maybeSingle();if(chk.error||!chk.data)return null;return !!(await dec(chk.data.e));}catch(e){return null;}}
+// este móvil cifraba con otra clave: pasa lo suyo a la clave buena
+async function rekey(oldK){try{const dr=await sb.from('docs').select('k,e');for(const r of (dr.data||[])){if(r.k!==ME.slot+'.quiz'&&r.k.indexOf('shared.')!==0)continue;if(r.k==='shared.check')continue;if(await dec(r.e))continue;const o=await decWith(oldK,r.e);if(o)await putDoc(r.k,o);}}catch(e){}}
 async function boot(){
  try{
   const mem=await sb.from('members').select('slot,name,pts').eq('user_id',SHELL.user.id).maybeSingle();
   if(mem.error||!mem.data){fatalMsg='Tu cuenta no está vinculada a Llama. Pídeselo a quien la creó.';screen='fatal';render();return;}
   ME.slot=mem.data.slot;ME.uid=SHELL.user.id;S.me=mem.data.slot;
   CK=await idbGet('ck');
+  if(CK&&(await keyOK())===false){OLDCK=CK;CK=null;try{await idbDel('ck');}catch(e){}passMsg='Este móvil tenía guardada una clave distinta a la de vuestra pareja. Escribe la buena y lo dejo todo en orden.';}
   if(CK){await afterKey();}else{screen='pass';render();}
  }catch(e){fatalMsg='No he podido abrir: '+e.message;screen='fatal';render();}
 }
@@ -782,9 +798,11 @@ async function submitPass(pass){
  try{
   const key=await deriveKey(pass);CK=key;
   const chk=await sb.from('docs').select('e').eq('k','shared.check').maybeSingle();
+  if(chk.error){CK=null;toast('No he podido comprobar la clave. Revisa la conexión');return;}
   if(chk.data){const o=await dec(chk.data.e);if(!o){CK=null;toast('Esa clave no coincide con la del otro móvil');return;}}
-  else{await putDoc('shared.check',{ok:1,v:2,at:Date.now()});}
+  else{if(!(await putDoc('shared.check',{ok:1,v:2,at:Date.now()}))){CK=null;toast('No he podido guardar la clave. Revisa la conexión');return;}}
   await idbSet('ck',key);
+  if(OLDCK){toast('Poniendo lo tuyo en orden…');await rekey(OLDCK);OLDCK=null;passMsg='';}
   await afterKey();
  }catch(e){CK=null;toast('No he podido entrar. Revisa la conexión');}
 }
@@ -809,7 +827,7 @@ function subscribe(){
   _ch.subscribe();
  }catch(e){}
 }
-function schedRefetch(){clearTimeout(_rf);_rf=setTimeout(async()=>{if(screen==='app'&&BOOTED){try{await loadAll();}catch(e){}render(true);}},600);}
+function schedRefetch(){clearTimeout(_rf);_rf=setTimeout(async()=>{if(!(screen==='app'&&BOOTED))return;try{await loadAll();}catch(e){}if(ui.quiz!=null||ui.sheet||ui.deck||picking())return;const a=document.activeElement;if(a&&(a.tagName==='INPUT'||a.tagName==='TEXTAREA')&&a.id!=='msg')return;render(true);},600);}
 setInterval(()=>{if(screen==='app'&&BOOTED&&document.visibilityState==='visible')schedRefetch();},30000);
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&screen==='app'&&BOOTED)schedRefetch();});
 
