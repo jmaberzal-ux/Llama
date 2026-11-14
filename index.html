@@ -81,8 +81,9 @@ async function loadApp(){
   window.sb=sb;
   window.SHELL={user:ses.user,url:SB_URL,logout:async function(){await sb.auth.signOut();location.reload();}};
   $("gate").style.display="none";
-  var lk=document.createElement("link");lk.rel="stylesheet";lk.href="app.css";document.head.appendChild(lk);
-  var sc=document.createElement("script");sc.src="app.js";sc.onerror=function(){$("app").textContent="No he podido cargar la app. Reintenta.";};document.head.appendChild(sc);
+  var _v="?v="+Date.now();
+  var lk=document.createElement("link");lk.rel="stylesheet";lk.href="app.css"+_v;document.head.appendChild(lk);
+  var sc=document.createElement("script");sc.src="app.js"+_v;sc.onerror=function(){$("app").textContent="No he podido cargar la app. Reintenta.";};document.head.appendChild(sc);
   if("serviceWorker" in navigator){try{await navigator.serviceWorker.register("sw.js");}catch(e){}}
  }catch(e){msg("No he podido abrir: "+(e.message||e));booted=false;}
 }
