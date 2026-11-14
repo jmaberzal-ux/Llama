@@ -378,7 +378,7 @@ function okReq(r,s,t){const e=r.slice(-1);if(e==='>'){const id=r.slice(0,-1);ret
 function str(r,s,t){const e=r.slice(-1);if(e==='>'){const id=r.slice(0,-1);return Math.min(val(s,id+'_d'),val(t,id+'_r'));}if(e==='<'){const id=r.slice(0,-1);return Math.min(val(t,id+'_d'),val(s,id+'_r'));}return Math.min(val(s,r),val(t,r));}
 const both=()=>S.qdone.a&&S.qdone.b;
 const m=(r,s,t)=>!both()||okReq(r,s,t);
-function blocked(c){const L=S.lim.a.concat(S.lim.b);const ids=c.r.map(x=>x.replace(/[<>]/g,''));return L.some(l=>(LIMRULE[l]||[]).some(b=>ids.includes(b)));}
+function blocked(c){const L=S.lim.a.concat(S.lim.b);const ids=(c.r||[]).map(x=>x.replace(/[<>]/g,''));return L.some(l=>(LIMRULE[l]||[]).some(b=>ids.includes(b)));}
 const hasK=k=>S.items.some(i=>i.k===k);
 const hasT=(k,t)=>S.items.some(i=>i.k===k&&i.t===t);
 function catOK(c){const re=/\{([TR]):(\w+)\}/g;let x;while((x=re.exec(c.t))){const k=x[1]==='T'?'toy':'ropa';if(hasK(k)&&!hasT(k,x[2]))return false;}return true;}
@@ -386,10 +386,10 @@ function eligible(cat,l,s,t){
  const base=CARDS.filter(c=>(cat==='azar'?c.c!=='pista':c.c===cat)&&c.l===l&&catOK(c)&&!blocked(c)&&c.r.every(r=>m(r,s,t)));
  const cu=S.custom.filter(c=>(cat==='azar'||c.c===cat)&&c.l===l&&(!c.imp||impOK(c)));
  return base.concat(cu);}
-function score(c,s,t){let sc=Math.random();if(both())sc+=c.r.reduce((a,r)=>a+(str(r,s,t)===2?1:0),0);if(/\{[TR]:/.test(c.t)&&(hasK('toy')||hasK('ropa')))sc+=1.5;return sc;}
+function score(c,s,t){let sc=Math.random();if(both())sc+=(c.r||[]).reduce((a,r)=>a+(str(r,s,t)===2?1:0),0);if(/\{[TR]:/.test(c.t)&&(hasK('toy')||hasK('ropa')))sc+=1.5;return sc;}
 function pickSug(cat,l,s,t,n){return eligible(cat,l,s,t).map(c=>({c,sc:score(c,s,t)})).sort((a,b)=>b.sc-a.sc).slice(0,n).map(x=>x.c);}
 function tipoOf(k,t){return TIPO[k].find(x=>x[0]===t)||['otro','🎁','Otro'];}
-function tips(c){const t=[];const ids=c.r.map(x=>x.replace(/[<>]/g,''));
+function tips(c){const t=[];const ids=(c.r||[]).map(x=>x.replace(/[<>]/g,''));
  if(c.c==='atad'||ids.includes('atar')||ids.includes('atarcama')){t.push('🚦 Semáforo activo · palabra: '+S.word);if(/esposas/.test(c.t)||ids.includes('policia'))t.push('🔑 La llave, siempre a la vista');if(/cuerdas/.test(c.t)||ids.includes('atarcama'))t.push('✂️ Tijera a mano. Nada alrededor del cuello');}
  if(ids.includes('columpio'))t.push('🔩 Revisad el anclaje y el peso máximo');
  if(ids.includes('vendar'))t.push('🙈 Preguntad cómo va cada poco');
@@ -556,7 +556,7 @@ function render(keep){const y=keep?window.scrollY:0;const app=$('#app');let cls=
  else if(!dev.get('intro'))app.innerHTML=vIntro();
  else if(ui.deck)app.innerHTML=vDeck();
  else if(ui.quiz!=null)app.innerHTML=vQuiz();
- else{app.innerHTML=header()+'<main>'+VIEWS[ui.tab]()+'</main>'+nav();cls='';}
+ else{let v;try{v=VIEWS[ui.tab]();}catch(e){console.log('vista',ui.tab,e);v=`<h1>Vaya</h1><div class="empty">Esta pantalla ha fallado al abrirse. Prueba otra opción o vuelve a Inicio.</div>`;if(ui.tab==='prop'){ui.cat='mia';ui.sug=[];}}app.innerHTML=header()+'<main>'+v+'</main>'+nav();cls='';}
  document.body.className=cls;if(mv){const m1=$('#msg');if(m1){m1.value=mv;if(mf)m1.focus();}}if(keep)window.scrollTo(0,y);}
 function openSheet(k,d){ui.sheet={k,d};renderSheet();}
 function renderSheet(){const el=$('#sheet');if(!ui.sheet){el.className='sheet hidden';el.innerHTML='';return;}
