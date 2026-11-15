@@ -55,7 +55,9 @@ async function saveVale(v){await putRow('vales',{id:v.id,slot:v.u,v:v.v,used:!!v
 
 /* ---------- reconstruir el estado S desde la base de datos ---------- */
 function applyDoc(T,slot,d){if(!d)return;T.q[slot]=d.q||{};T.sty[slot]=d.sty||{};T.qdone[slot]=!!d.qdone;T.lim[slot]=d.lim||[];T.limtxt[slot]=d.limtxt||'';T.fan[slot]=d.fan||[];T.sueno[slot]=d.sueno||'';T.kok[slot]=d.kok||{};T.read[slot]=d.read||0;}
-function myDoc(){const u=ME.slot;return{q:S.q[u],sty:S.sty[u],qdone:S.qdone[u],lim:S.lim[u],limtxt:S.limtxt[u],fan:S.fan[u],sueno:S.sueno[u],kok:S.kok[u],read:S.read[u]};}
+function docOf(T,u){return{q:T.q[u],sty:T.sty[u],qdone:T.qdone[u],lim:T.lim[u],limtxt:T.limtxt[u],fan:T.fan[u],sueno:T.sueno[u],kok:T.kok[u],read:T.read[u]};}
+function cajOf(T){return{items:T.items,custom:T.custom,word:T.word,temp:T.temp,tempAt:T.tempAt,logros:T.logros};}
+function myDoc(){return docOf(S,ME.slot);}
 async function decRows(table,cols){const r=await sb.from(table).select(cols||'*');const out=[];for(const row of (r.data||[])){const o=await dec(row.e);out.push({row,o:o||{}});}return out;}
 
 async function loadAll(){
@@ -83,8 +85,10 @@ async function loadAll(){
  // feed (solo el mío)
  for(const x of await decRows('feed')){NS.feed.push({u:ME.slot,t:x.o.t,ts:x.o.ts||0});}
  NS.feed.sort((a,b)=>b.ts-a.ts);if(NS.feed.length>80)NS.feed.length=80;
- // lo mío que aún no se ha guardado manda sobre lo que llega del servidor
- if(_dirty&&BOOTED&&S&&S.me===ME.slot){applyDoc(NS,ME.slot,myDoc());NS.items=S.items;NS.custom=S.custom;NS.word=S.word;}
+ // lo mío que aún no se ha guardado manda sobre lo que llega del servidor; lo demás se toma del servidor
+ {const qk=ME.slot+'.quiz',ck='shared.cajon',live=BOOTED&&S&&S.me===ME.slot;
+  if(live&&_last[qk]!==undefined&&JSON.stringify(myDoc())!==_last[qk])applyDoc(NS,ME.slot,myDoc());else _last[qk]=JSON.stringify(docOf(NS,ME.slot));
+  if(live&&_last[ck]!==undefined&&JSON.stringify(cajOf(S))!==_last[ck]){NS.items=S.items;NS.custom=S.custom;NS.word=S.word;}else _last[ck]=JSON.stringify(cajOf(NS));}
  if(BOOTED&&S&&S.chat){const ids=new Set(NS.chat.map(x=>x.id));S.chat.forEach(x=>{if(x._loc&&!ids.has(x.id)&&Date.now()-x._loc<20000)NS.chat.push(x);});NS.chat.sort((a,b)=>a.at-b.at);}
  S=NS;
 }
@@ -93,7 +97,7 @@ async function loadAll(){
 let _sv=null,_dirty=false;const _last={};
 function save(){_dirty=true;clearTimeout(_sv);_sv=setTimeout(flush,350);}
 async function putDocIf(k,obj){const j=JSON.stringify(obj);if(_last[k]===j)return;if(await putDoc(k,obj))_last[k]=j;}
-async function flush(){if(!BOOTED||!ME.slot)return;_sv=null;await putDocIf(ME.slot+'.quiz',myDoc());await putDocIf('shared.cajon',{items:S.items,custom:S.custom,word:S.word,temp:S.temp,tempAt:S.tempAt,logros:S.logros});if(!_sv)_dirty=false;}
+async function flush(){if(!BOOTED||!ME.slot)return;_sv=null;await putDocIf(ME.slot+'.quiz',myDoc());await putDocIf('shared.cajon',cajOf(S));if(!_sv)_dirty=false;}
 
 /* ---------- puntos vía función segura ---------- */
 function addPts(slot,delta){S.pts[slot]=Math.max(0,(S.pts[slot]||0)+delta);rpcPts(slot,delta);}
